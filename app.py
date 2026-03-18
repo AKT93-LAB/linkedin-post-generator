@@ -6,9 +6,11 @@ Single endpoint, no database, prompt-engineered for quality.
 import json
 import os
 import time
+from collections import defaultdict
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import httpx
 
@@ -24,8 +26,36 @@ app = FastAPI(
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = os.getenv("GENERATION_MODEL", "anthropic/claude-sonnet-4")
-VOICE_MODEL = os.getenv("VOICE_MODEL", "anthropic/claude-sonnet-4")
+DEFAULT_MODEL = os.getenv("GENERATION_MODEL", "google/gemini-flash-1.5")
+VOICE_MODEL = os.getenv("VOICE_MODEL", "google/gemini-flash-1.5")
+
+# Rate limiting: max requests per IP per window
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "20"))
+RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # seconds
+
+# In-memory rate limiter
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(client_ip: str) -> None:
+    """Check and enforce per-IP rate limit. Raises HTTP 429 if exceeded."""
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+
+    # Clean old entries
+    _rate_limit_store[client_ip] = [
+        ts for ts in _rate_limit_store[client_ip] if ts > window_start
+    ]
+
+    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+        retry_after = int(_rate_limit_store[client_ip][0] + RATE_LIMIT_WINDOW - now) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    _rate_limit_store[client_ip].append(now)
 
 
 # --- Request/Response Models ---
@@ -40,7 +70,7 @@ class GenerateRequest(BaseModel):
     )
     voice_samples: Optional[list[str]] = Field(
         default=None,
-        description="3-5 of the user's past LinkedIn posts for voice cloning"
+        description="2+ of the user's past LinkedIn posts for voice cloning"
     )
     count: int = Field(default=5, ge=1, le=10, description="Number of posts to generate")
 
@@ -191,16 +221,20 @@ async def generate_posts(
 # --- Endpoints ---
 
 @app.post("/generate", response_model=GenerateResponse)
-async def generate(req: GenerateRequest):
+async def generate(req: GenerateRequest, request: Request):
     """
     Generate LinkedIn posts.
 
     - **topic**: What to write about
     - **niche**: Target audience (e.g. "B2B SaaS founders", "marketers", "devs")
     - **tone**: Writing tone (default: professional but approachable)
-    - **voice_samples**: Optional array of past posts for voice cloning
+    - **voice_samples**: Optional array of 2+ past posts for voice cloning
     - **count**: Number of posts (1-10, default 5)
     """
+    # Rate limit by IP
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+
     start = time.time()
 
     # Step 1: Analyze voice if samples provided

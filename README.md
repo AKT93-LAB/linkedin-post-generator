@@ -77,18 +77,29 @@ curl -X POST http://localhost:8000/generate \
   ],
   "voice_analyzed": true,
   "generation_time_ms": 8500,
-  "model_used": "anthropic/claude-sonnet-4"
+  "model_used": "google/gemini-flash-1.5"
 }
 ```
 
 ## Architecture
 
 - **`prompts.py`** — Prompt engineering (the core product)
-- **`app.py`** — FastAPI endpoint + LLM client
+- **`app.py`** — FastAPI endpoint + LLM client + rate limiter
 - Voice analysis extracts a "voice DNA" profile, then generation uses it as a style constraint
 - Two-phase pipeline: analyze voice → generate posts (only if 2+ samples provided)
 - OpenRouter for model access (swap models via env vars)
+- In-memory per-IP rate limiting (20 req/min default, configurable via env)
 
 ## Deployment
 
 Designed for RapidAPI or any hosting. Single process, no database, no dependencies beyond an API key.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENROUTER_API_KEY` | — | **Required.** OpenRouter API key |
+| `GENERATION_MODEL` | `google/gemini-flash-1.5` | Model for post generation |
+| `VOICE_MODEL` | `google/gemini-flash-1.5` | Model for voice analysis |
+| `RATE_LIMIT_REQUESTS` | `20` | Max requests per IP per window |
+| `RATE_LIMIT_WINDOW` | `60` | Rate limit window in seconds |
