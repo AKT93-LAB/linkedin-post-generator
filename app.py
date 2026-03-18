@@ -18,8 +18,16 @@ from prompts import build_voice_analysis_prompt, build_generation_prompt, POST_G
 
 app = FastAPI(
     title="LinkedIn Post Generator",
-    description="Generate voice-cloned LinkedIn posts from topic + niche + tone",
+    description=(
+        "Generate high-quality, voice-cloned LinkedIn posts from a topic, target niche, and desired tone. "
+        "Optionally provide 2+ past posts to clone the author's exact writing style. "
+        "Returns 5 posts with varied hooks (contrarian, story, listicle, framework, observation) "
+        "and engagement predictions. Built for LinkedIn creators, ghostwriters, and agencies."
+    ),
     version="0.1.0",
+    servers=[
+        {"url": os.getenv("PUBLIC_URL", "https://hetzner-vps.tail80b7e1.ts.net"), "description": "Production"},
+    ],
 )
 
 # --- Config ---
@@ -76,19 +84,21 @@ class GenerateRequest(BaseModel):
 
 
 class Post(BaseModel):
-    hook: str
-    body: str
-    format_type: str
-    hook_type: str
-    estimated_chars: int
-    engagement_prediction: str
+    """A single generated LinkedIn post."""
+    hook: str = Field(..., description="The opening 1-2 lines that stop the scroll")
+    body: str = Field(..., description="Full post content with line breaks for paragraph separation")
+    format_type: str = Field(..., description="Post structure: story, listicle, framework, contrarian, or observation")
+    hook_type: str = Field(..., description="Hook pattern used: contrarian, bold_statement, story_opener, list_opener, etc.")
+    estimated_chars: int = Field(..., description="Approximate character count of the body")
+    engagement_prediction: str = Field(..., description="Why this post will drive comments and engagement")
 
 
 class GenerateResponse(BaseModel):
-    posts: list[Post]
-    voice_analyzed: bool
-    generation_time_ms: int
-    model_used: str
+    """Response containing generated LinkedIn posts."""
+    posts: list[Post] = Field(..., description="Array of generated posts")
+    voice_analyzed: bool = Field(..., description="Whether voice samples were analyzed for style cloning")
+    generation_time_ms: int = Field(..., description="Total generation time in milliseconds")
+    model_used: str = Field(..., description="LLM model used for generation")
 
 
 # --- LLM Client ---
@@ -220,16 +230,26 @@ async def generate_posts(
 
 # --- Endpoints ---
 
-@app.post("/generate", response_model=GenerateResponse)
+@app.post(
+    "/generate",
+    response_model=GenerateResponse,
+    summary="Generate LinkedIn posts",
+    description=(
+        "Generate 1-10 LinkedIn posts about a given topic for a specific audience niche. "
+        "Optionally provide 2+ past posts as voice_samples to clone the author's writing style. "
+        "Returns posts with hooks, full body text, format type, and engagement predictions."
+    ),
+    tags=["Posts"],
+)
 async def generate(req: GenerateRequest, request: Request):
     """
     Generate LinkedIn posts.
 
-    - **topic**: What to write about
+    - **topic**: What to write about (3-500 chars)
     - **niche**: Target audience (e.g. "B2B SaaS founders", "marketers", "devs")
     - **tone**: Writing tone (default: professional but approachable)
     - **voice_samples**: Optional array of 2+ past posts for voice cloning
-    - **count**: Number of posts (1-10, default 5)
+    - **count**: Number of posts to generate (1-10, default 5)
     """
     # Rate limit by IP
     client_ip = request.client.host if request.client else "unknown"
@@ -267,8 +287,9 @@ async def generate(req: GenerateRequest, request: Request):
     )
 
 
-@app.get("/health")
+@app.get("/health", summary="Health check", tags=["System"])
 async def health():
+    """Check if the API is running and which model is configured."""
     return {"status": "ok", "model": DEFAULT_MODEL}
 
 
