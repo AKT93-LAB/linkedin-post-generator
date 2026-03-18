@@ -1,0 +1,15 @@
+[Unit]
+Description=LinkedIn Post Generator API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/linkedin-post-generator
+EnvironmentFile=/root/linkedin-post-generator/.env
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

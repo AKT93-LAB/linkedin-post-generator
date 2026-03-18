@@ -10,9 +10,8 @@ from collections import defaultdict
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-import httpx
+from anthropic import AsyncAnthropic
 
 from prompts import build_voice_analysis_prompt, build_generation_prompt, POST_GENERATION_SYSTEM
 
@@ -32,10 +31,12 @@ app = FastAPI(
 
 # --- Config ---
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = os.getenv("GENERATION_MODEL", "google/gemini-flash-1.5")
-VOICE_MODEL = os.getenv("VOICE_MODEL", "google/gemini-flash-1.5")
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
+DEFAULT_MODEL = os.getenv("GENERATION_MODEL", "MiniMax-M2.5")
+VOICE_MODEL = os.getenv("VOICE_MODEL", "MiniMax-M2.5")
+
+_client = AsyncAnthropic(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL) if MINIMAX_API_KEY else None
 
 # Rate limiting: max requests per IP per window
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "20"))
@@ -110,36 +111,22 @@ async def call_llm(
     temperature: float = 0.8,
     max_tokens: int = 4096,
 ) -> str:
-    """Call OpenRouter API."""
-    if not OPENROUTER_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not configured")
+    """Call MiniMax via Anthropic-compatible API."""
+    if not _client:
+        raise HTTPException(status_code=500, detail="MINIMAX_API_KEY not configured")
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{OPENROUTER_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM API error: {resp.status_code} — {resp.text[:500]}"
-        )
-
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    resp = await _client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    # MiniMax-M2.5 returns ThinkingBlock + TextBlock; grab the text one
+    for block in resp.content:
+        if hasattr(block, "text"):
+            return block.text
+    return resp.content[-1].text
 
 
 # --- Voice Analysis ---
@@ -152,7 +139,7 @@ async def analyze_voice(samples: list[str]) -> dict:
         user=prompt,
         model=VOICE_MODEL,
         temperature=0.2,  # Low temp for consistent analysis
-        max_tokens=2048,
+        max_tokens=4096,
     )
 
     # Parse JSON from response (handle markdown code blocks)
@@ -193,7 +180,7 @@ async def generate_posts(
         user=user_prompt,
         model=DEFAULT_MODEL,
         temperature=0.85,  # Higher temp for creative variety
-        max_tokens=4096,
+        max_tokens=8192,
     )
 
     # Parse JSON from response
@@ -209,10 +196,23 @@ async def generate_posts(
     try:
         posts_data = json.loads(cleaned)
     except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to parse LLM response as JSON. Raw response: {raw[:1000]}"
-        )
+        # Try to recover truncated JSON — close open brackets/braces/quotes
+        fixed = cleaned
+        # Count open vs close brackets
+        for open_c, close_c in [('{', '}'), ('[', ']')]:
+            diff = fixed.count(open_c) - fixed.count(close_c)
+            if diff > 0:
+                fixed = fixed + (close_c * diff)
+        # Close any trailing unclosed string
+        if fixed.count('"') % 2 != 0:
+            fixed = fixed + '"'
+        try:
+            posts_data = json.loads(fixed)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to parse LLM response as JSON. Raw response: {raw[:1000]}"
+            )
 
     posts = []
     for item in posts_data[:count]:

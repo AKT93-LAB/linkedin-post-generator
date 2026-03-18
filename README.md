@@ -98,8 +98,10 @@ Designed for RapidAPI or any hosting. Single process, no database, no dependenci
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENROUTER_API_KEY` | — | **Required.** OpenRouter API key |
-| `GENERATION_MODEL` | `google/gemini-flash-1.5` | Model for post generation |
-| `VOICE_MODEL` | `google/gemini-flash-1.5` | Model for voice analysis |
+| `MINIMAX_API_KEY` | — | **Required.** MiniMax API key |
+| `MINIMAX_BASE_URL` | `https://api.minimax.io/anthropic` | MiniMax Anthropic-compatible endpoint |
+| `GENERATION_MODEL` | `MiniMax-M2.5` | Model for post generation |
+| `VOICE_MODEL` | `MiniMax-M2.5` | Model for voice analysis |
+| `PUBLIC_URL` | `https://hetzner-vps.tail80b7e1.ts.net` | Public URL for OpenAPI spec |
 | `RATE_LIMIT_REQUESTS` | `20` | Max requests per IP per window |
 | `RATE_LIMIT_WINDOW` | `60` | Rate limit window in seconds |
