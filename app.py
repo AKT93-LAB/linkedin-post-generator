@@ -207,9 +207,9 @@ async def generate(req: GenerateRequest):
     voice_dna = None
     voice_analyzed = False
 
-    if voice_samples and len(voice_samples) >= 2:
+    if req.voice_samples and len(req.voice_samples) >= 2:
         try:
-            voice_dna = await analyze_voice(voice_samples)
+            voice_dna = await analyze_voice(req.voice_samples)
             voice_analyzed = bool(voice_dna)
         except Exception:
             voice_dna = None  # Graceful fallback — generate without voice cloning
